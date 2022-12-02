@@ -40,14 +40,16 @@ int verbose;
 
 uint32_t gHistory;
 // For tournament
-uint8_t *tournamentGBHT;  // global BHT
+uint8_t *tournamentGBHT;  // global tournament BHT
 uint8_t *lBHT;  // local BHT
 uint32_t *lIndexTable;  // for indexing lBHT
 uint8_t *selector;  // selector
+int gBHTIndex; //global BHT index
 
 uint8_t lPrediction; //local prediction
 uint8_t gPrediction; //global prediction
 
+uint8_t *gshareBHT; //global gshare BHT
 //------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
@@ -61,10 +63,13 @@ init_predictor()
   //TODO: Initialize Branch Predictor Data Structures
   //
   switch(bpType){
+    gHistory = 0;
     case STATIC:
       return;
     case GSHARE:
-      return;
+      gshareBHT = malloc((1 << ghistoryBits) * sizeof(uint8_t));
+      memset(gshareBHT, WN, sizeof(uint8_t) * (1 << ghistoryBits));
+      break;
     case TOURNAMENT:
       tournamentGBHT = malloc((1 << ghistoryBits) * sizeof(uint8_t));
       lBHT = malloc((1 << lhistoryBits) * sizeof(uint8_t));
@@ -75,6 +80,7 @@ init_predictor()
       memset(lBHT, WN, sizeof(uint8_t) * (1 << lhistoryBits));
       memset(lIndexTable, 0, sizeof(uint32_t) * (1 << pcIndexBits));
       memset(selector, WN, sizeof(uint8_t) * (1 << ghistoryBits)); //xxx
+      break;
   }
 }
 
@@ -82,6 +88,15 @@ init_predictor()
 // Returning TAKEN indicates a prediction of taken; returning NOTTAKEN
 // indicates a prediction of not taken
 //
+
+uint8_t gshare_global_prediction(uint32_t pc, int gBHTIndex) {
+  gBHTIndex = ((pc ^ gHistory) & ((1 << ghistoryBits) - 1));
+  uint8_t prediction = gshareBHT[gBHTIndex];
+  if (prediction == WN || prediction == SN)
+    return NOTTAKEN;
+  else
+    return TAKEN;
+}
 
 uint8_t tournament_global_prediction(uint32_t pc, int gBHTIndex) {
   uint8_t prediction = tournamentGBHT[gBHTIndex];
@@ -110,13 +125,17 @@ make_prediction(uint32_t pc)
 
   // Make a prediction based on the bpType
   switch (bpType) {
+
     case STATIC:
       return TAKEN;
+
     case GSHARE:
-      return TAKEN;
+      gPrediction = gshare_global_prediction(pc, gBHTIndex);
+      return gPrediction;
+
     case TOURNAMENT: ;
       // select the predictor (local or global)
-      int gBHTIndex = gHistory & ((1 << ghistoryBits) - 1);
+      gBHTIndex = gHistory & ((1 << ghistoryBits) - 1);
 
       gPrediction = tournament_global_prediction(pc, gBHTIndex);
       lPrediction = tournament_local_prediction(pc);
@@ -127,6 +146,7 @@ make_prediction(uint32_t pc)
         return gPrediction;
       else
         return lPrediction;
+
     case CUSTOM:
     default:
       break;
@@ -181,8 +201,29 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
 
 }
 
-void
-train_predictor(uint32_t pc, uint8_t outcome)
+
+void train_gshare(uint32_t pc, uint8_t outcome) {
+  int gBHTIndex = (pc ^ gHistory) & ((1 << ghistoryBits) - 1);
+
+  //Update gshareBHT
+  if (outcome == TAKEN) {
+    if (gshareBHT[gBHTIndex] != ST)
+      gshareBHT[gBHTIndex] += 1;
+  }
+  else {
+    if (gshareBHT[gBHTIndex] != SN)
+      gshareBHT[gBHTIndex] -= 1;
+  }
+
+  //Update global history shift register
+  gHistory <<= 1;
+  gHistory &= ((1 << ghistoryBits) - 1);
+  gHistory |= outcome;
+
+}
+
+
+void train_predictor(uint32_t pc, uint8_t outcome)
 {
   //
   //TODO: Implement Predictor training
@@ -191,7 +232,7 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case STATIC:
       break;
     case GSHARE:
-      return;
+      train_gshare(pc, outcome);
       break;
     case TOURNAMENT:
       train_tournament(pc, outcome);
