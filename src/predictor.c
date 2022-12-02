@@ -7,6 +7,7 @@
 //========================================================//
 #include <stdio.h>
 #include "predictor.h"
+#include <string.h>
 
 //
 // TODO:Student Information
@@ -59,7 +60,7 @@ init_predictor()
   //
   //TODO: Initialize Branch Predictor Data Structures
   //
-  switch(bpType):
+  switch(bpType){
     case STATIC:
       return;
     case GSHARE:
@@ -74,6 +75,7 @@ init_predictor()
       memset(lBHT, WN, sizeof(uint8_t) * (1 << lhistoryBits));
       memset(lIndexTable, 0, sizeof(uint32_t) * (1 << pcIndexBits));
       memset(selector, WN, sizeof(uint8_t) * (1 << ghistoryBits)); //xxx
+  }
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -83,20 +85,20 @@ init_predictor()
 
 uint8_t tournament_global_prediction(uint32_t pc, int gBHTIndex) {
   uint8_t prediction = tournamentGBHT[gBHTIndex];
-  if (prediction == WN || predictor == SN)
-    return NOTTAKEN
+  if (prediction == WN || prediction == SN)
+    return NOTTAKEN;
   else
-    return TAKEN
+    return TAKEN;
 }
 
 uint8_t tournament_local_prediction(uint32_t pc) {
   int lIndexTableIndex = pc & ((1 << pcIndexBits) - 1);
   uint32_t lBHTindex = lIndexTable[lIndexTableIndex];
   uint8_t prediction  = lBHT[lBHTindex];
-  rif (prediction == WN || predictor == SN)
-    return NOTTAKEN
+  if (prediction == WN || prediction == SN)
+    return NOTTAKEN;
   else
-    return TAKEN
+    return TAKEN;
 }
 
 uint8_t
@@ -111,12 +113,13 @@ make_prediction(uint32_t pc)
     case STATIC:
       return TAKEN;
     case GSHARE:
-    case TOURNAMENT:
+      return TAKEN;
+    case TOURNAMENT: ;
       // select the predictor (local or global)
       int gBHTIndex = gHistory & ((1 << ghistoryBits) - 1);
 
-      gPrediction = tournament_global_prediction(pc, gBHTIndex)
-      lPrediction = tournament_local_prediction(pc)
+      gPrediction = tournament_global_prediction(pc, gBHTIndex);
+      lPrediction = tournament_local_prediction(pc);
 
       uint8_t predictor = selector[gBHTIndex];
 
@@ -143,17 +146,17 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
   uint32_t lBHTindex = lIndexTable[lIndexTableIndex];
 
   //Update gBHT and lBHT
-  if outcome == TAKEN {
-    if (gBHT[gBHTIndex] != ST)
-      gBHT[gBHTIndex] += 1
+  if (outcome == TAKEN) {
+    if (tournamentGBHT[gBHTIndex] != ST)
+      tournamentGBHT[gBHTIndex] += 1;
     if (lBHT[lBHTindex] != ST)
-      lBHT[lBHTindex] += 1
+      lBHT[lBHTindex] += 1;
   }
   else {
-    if (gBHT[gBHTIndex] != SN)
-      gBHT[gBHTIndex] -= 1
+    if (tournamentGBHT[gBHTIndex] != SN)
+      tournamentGBHT[gBHTIndex] -= 1;
     if (lBHT[lBHTindex] != SN)
-      lBHT[lBHTindex] -= 1
+      lBHT[lBHTindex] -= 1;
   }
 
   // Update selector
@@ -163,7 +166,7 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
         selector[gBHTIndex] += 1;
     }
     else {
-      if (selector[gBHTIndex] != NT)
+      if (selector[gBHTIndex] != SN)
         selector[gBHTIndex] -= 1;
     }
   }
@@ -175,7 +178,7 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
   gHistory <<= 1;
   gHistory  &= ((1 << ghistoryBits) - 1);
   gHistory |= outcome;
-  }
+
 }
 
 void
@@ -188,6 +191,7 @@ train_predictor(uint32_t pc, uint8_t outcome)
     case STATIC:
       break;
     case GSHARE:
+      return;
       break;
     case TOURNAMENT:
       train_tournament(pc, outcome);
