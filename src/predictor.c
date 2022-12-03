@@ -30,6 +30,10 @@ int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
 
+
+#define max(a,b) ((a) > (b) ? (a) : (b))
+#define min(a,b) ((a) < (b) ? (a) : (b))
+
 //------------------------------------//
 //      Predictor Data Structures     //
 //------------------------------------//
@@ -50,14 +54,24 @@ uint8_t lPrediction; //local prediction
 uint8_t gPrediction; //global prediction
 
 uint8_t *gshareBHT; //global gshare BHT
+
+//For perceptron
+int prediction;
+uint32_t numPerceptrons;
+uint32_t numWeights;
+int threshold;
+int weightBits;
+int absMaxWeight;
+int32_t **perceptronWeightsTable;
+int32_t *perceptronBiasTable;
+
 //------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
 
 // Initialize the predictor
 //
-void
-init_predictor()
+void init_predictor()
 {
   //
   //TODO: Initialize Branch Predictor Data Structures
@@ -81,6 +95,21 @@ init_predictor()
       memset(lIndexTable, 0, sizeof(uint32_t) * (1 << pcIndexBits));
       memset(selector, WN, sizeof(uint8_t) * (1 << ghistoryBits)); //xxx
       break;
+    case CUSTOM:
+      weightBits = 5; // can set it as argument
+      numWeights = ghistoryBits;
+      numPerceptrons = (1 << pcIndexBits);
+      printf("\nnumPerceptrons: %d\n", numPerceptrons);
+      perceptronBiasTable = (int32_t*)calloc(numPerceptrons, sizeof(int32_t));
+      perceptronWeightsTable = (int32_t**)malloc(numPerceptrons*sizeof(int32_t*));
+      for (int i = 0; i < numPerceptrons; i++)
+        perceptronWeightsTable[i] = (int32_t*)calloc(numWeights,sizeof(int32_t));
+      
+
+      threshold = (1 << lhistoryBits); //set it as 8 bits; threshold = 2^8 = 256
+      absMaxWeight = (1 << weightBits) - 1;
+      printf("numWeights:%d\n", numWeights);
+      printf("threshold:%d\n", threshold);
   }
 }
 
@@ -116,8 +145,17 @@ uint8_t tournament_local_prediction(uint32_t pc) {
     return TAKEN;
 }
 
-uint8_t
-make_prediction(uint32_t pc)
+int perceptron_prediction_raw(uint32_t pc){
+  int perceptronIndex = pc & ((1 << pcIndexBits) - 1);
+  int output = perceptronBiasTable[perceptronIndex];
+  for (int i = 0; i < numWeights; i++)
+  {
+    output = (gHistory >> i) & 1? output + perceptronWeightsTable[perceptronIndex][i] : output - perceptronWeightsTable[perceptronIndex][i];
+  }
+  return output;
+}
+
+uint8_t make_prediction(uint32_t pc)
 {
   //
   //TODO: Implement prediction scheme
@@ -133,7 +171,7 @@ make_prediction(uint32_t pc)
       gPrediction = gshare_global_prediction(pc, gBHTIndex);
       return gPrediction;
 
-    case TOURNAMENT: ;
+    case TOURNAMENT:
       // select the predictor (local or global)
       gBHTIndex = gHistory & ((1 << ghistoryBits) - 1);
 
@@ -148,6 +186,10 @@ make_prediction(uint32_t pc)
         return lPrediction;
 
     case CUSTOM:
+      
+      prediction = perceptron_prediction_raw(pc);
+      gPrediction = prediction >= 0? TAKEN: NOTTAKEN;
+      return gPrediction;
     default:
       break;
   }
@@ -160,6 +202,14 @@ make_prediction(uint32_t pc)
 // outcome 'outcome' (true indicates that the branch was taken, false
 // indicates that the branch was not taken)
 //
+
+void update_ghistory_shift_register(uint8_t outcome)
+{
+  gHistory <<= 1;
+  gHistory  &= ((1 << ghistoryBits) - 1);
+  gHistory |= outcome;
+}
+
 void train_tournament(uint32_t pc, uint8_t outcome) {
   int gBHTIndex = gHistory & ((1 << ghistoryBits) - 1);
   int lIndexTableIndex = pc & ((1 << pcIndexBits) - 1);
@@ -198,12 +248,12 @@ void train_tournament(uint32_t pc, uint8_t outcome) {
   gHistory <<= 1;
   gHistory  &= ((1 << ghistoryBits) - 1);
   gHistory |= outcome;
-
+  //update_ghistory_shift_register(outcome);
 }
 
 
 void train_gshare(uint32_t pc, uint8_t outcome) {
-  int gBHTIndex = (pc ^ gHistory) & ((1 << ghistoryBits) - 1);
+  int gBHTIndex =  (pc ^ gHistory) & ((1 << ghistoryBits) - 1);
 
   //Update gshareBHT
   if (outcome == TAKEN) {
@@ -216,12 +266,44 @@ void train_gshare(uint32_t pc, uint8_t outcome) {
   }
 
   //Update global history shift register
-  gHistory <<= 1;
-  gHistory &= ((1 << ghistoryBits) - 1);
-  gHistory |= outcome;
+  // gHistory <<= 1;
+  // gHistory &= ((1 << ghistoryBits) - 1);
+  // gHistory |= outcome;
+  update_ghistory_shift_register(outcome);
 
 }
 
+void train_perceptron(uint32_t pc, uint8_t outcome)
+{
+  int output;
+  output = perceptron_prediction_raw(pc);
+  //printf("\n#%d", output);
+  gPrediction = output >= 0? TAKEN: NOTTAKEN;
+
+  int perceptronIndex = pc & ((1 << pcIndexBits) - 1);
+  //printf("#%d\n", perceptronIndex);
+  //int32_t* weights = perceptronWeightsTable[perceptronIndex];
+  if ((gPrediction != outcome) || (abs(output) < threshold))
+  {
+    
+    for (int j = 0; j < numWeights; j++)
+    {
+      int8_t signMultiplier = ((gHistory >> j)&1) == 1 ? 1: -1; 
+
+      perceptronWeightsTable[perceptronIndex][j] += (signMultiplier == (outcome==TAKEN?1:-1))?1:-1; //(((gHistory>>j) & 1)==outcome) ? 1 : -1;
+      perceptronWeightsTable[perceptronIndex][j] = max(min(perceptronWeightsTable[perceptronIndex][j], 127), -128);
+    }
+    perceptronBiasTable[perceptronIndex] += (outcome==TAKEN ?1:-1);
+  }
+  // for (int j = 0; j< numWeights; j++)
+  //   printf("\n##%d",perceptronWeightsTable[perceptronIndex][j]);
+  //Update global history shift 
+  gHistory = (gHistory<<1 | outcome) & ((1<<numWeights) - 1);
+  // gHistory <<= 1;
+  // gHistory  &= ((1 << ghistoryBits) - 1);
+  // gHistory |= outcome;
+  //update_ghistory_shift_register(outcome);
+}
 
 void train_predictor(uint32_t pc, uint8_t outcome)
 {
@@ -238,6 +320,7 @@ void train_predictor(uint32_t pc, uint8_t outcome)
       train_tournament(pc, outcome);
       break;
     case CUSTOM:
+      train_perceptron(pc, outcome);
       break;
     default:
       break;
