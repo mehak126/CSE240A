@@ -47,6 +47,11 @@ extern int pcIndexBits;  // Number of bits used for PC index
 extern int bpType;       // Branch Prediction Type
 extern int verbose;
 
+// For Custom (perceptron) Predictor
+extern int numPerceptrons; // Number of perceptrons
+extern int weightBits; 	   // Number of bits used for weights in perceptrons
+extern int threshold;	   // Threshold used for training perceptron
+
 //------------------------------------//
 //    Predictor Function Prototypes   //
 //------------------------------------//

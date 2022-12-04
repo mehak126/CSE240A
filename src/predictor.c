@@ -30,6 +30,10 @@ int pcIndexBits;  // Number of bits used for PC index
 int bpType;       // Branch Prediction Type
 int verbose;
 
+int numPerceptrons; // Number of perceptrons
+int weightBits;     // Number of bits used for weights in perceptron
+int threshold;      // Threshold used for training perceptron
+
 
 #define max(a,b) ((a) > (b) ? (a) : (b))
 #define min(a,b) ((a) < (b) ? (a) : (b))
@@ -56,14 +60,11 @@ uint8_t gPrediction; //global prediction
 uint8_t *gshareBHT; //global gshare BHT
 
 //For perceptron
-int prediction;
-uint32_t numPerceptrons;
-uint32_t numWeights;
-int threshold;
-int weightBits;
-int absMaxWeight;
-int32_t **perceptronWeightsTable;
-int32_t *perceptronBiasTable;
+int prediction; // perceptron prediction
+int numWeights; // number of weights in a perceptron, same as number of bits used for gHistory
+int absMaxWeight; // absolute maximum value of a weight in a perceptron
+int32_t **perceptronWeightsTable; // Table to store weights of perceptrons
+int32_t *perceptronBiasTable;     // Table to store biases of perceptrons
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -96,21 +97,21 @@ void init_predictor()
       memset(selector, WN, sizeof(uint8_t) * (1 << ghistoryBits)); //xxx
       break;
     case CUSTOM:
-      weightBits = 5; // can set it as argument
+      // weightBits = 5; // can set it as argument
       numWeights = ghistoryBits;
-      numPerceptrons = (1 << pcIndexBits);
-      printf("\nnumPerceptrons: %d\n", numPerceptrons);
+      
       perceptronBiasTable = (int32_t*)calloc(numPerceptrons, sizeof(int32_t));
       perceptronWeightsTable = (int32_t**)malloc(numPerceptrons*sizeof(int32_t*));
       for (int i = 0; i < numPerceptrons; i++)
         perceptronWeightsTable[i] = (int32_t*)calloc(numWeights,sizeof(int32_t));
-      
 
-      threshold = (1 << lhistoryBits); //set it as 8 bits; threshold = 2^8 = 256
+      // threshold = (1 << lhistoryBits); //set it as 8 bits; threshold = 2^8 = 256
       absMaxWeight = (1 << weightBits) - 1;
-      printf("numWeights:%d\n", numWeights);
-      printf("threshold:%d\n", threshold);
-  }
+      printf("Number of perceptrons: %d\n", numPerceptrons);
+      printf("Number of weights: %d\n", numWeights);
+      printf("Number of weightBits: %d\n", weightBits);
+      printf("total memory of perceptron predictor: %d Kbits \n", (numPerceptrons*(numWeights + 1)*(weightBits + 1))/1024);
+    }
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -146,12 +147,11 @@ uint8_t tournament_local_prediction(uint32_t pc) {
 }
 
 int perceptron_prediction_raw(uint32_t pc){
-  int perceptronIndex = pc & ((1 << pcIndexBits) - 1);
+  //Hash function to index perceptron table
+  int perceptronIndex = pc & (numPerceptrons - 1);
   int output = perceptronBiasTable[perceptronIndex];
   for (int i = 0; i < numWeights; i++)
-  {
     output = (gHistory >> i) & 1? output + perceptronWeightsTable[perceptronIndex][i] : output - perceptronWeightsTable[perceptronIndex][i];
-  }
   return output;
 }
 
@@ -186,7 +186,6 @@ uint8_t make_prediction(uint32_t pc)
         return lPrediction;
 
     case CUSTOM:
-      
       prediction = perceptron_prediction_raw(pc);
       gPrediction = prediction >= 0? TAKEN: NOTTAKEN;
       return gPrediction;
@@ -275,23 +274,20 @@ void train_gshare(uint32_t pc, uint8_t outcome) {
 
 void train_perceptron(uint32_t pc, uint8_t outcome)
 {
-  int output;
-  output = perceptron_prediction_raw(pc);
-  //printf("\n#%d", output);
-  gPrediction = output >= 0? TAKEN: NOTTAKEN;
+  prediction = perceptron_prediction_raw(pc);
+  gPrediction = prediction >= 0? TAKEN: NOTTAKEN;
 
-  int perceptronIndex = pc & ((1 << pcIndexBits) - 1);
-  //printf("#%d\n", perceptronIndex);
-  //int32_t* weights = perceptronWeightsTable[perceptronIndex];
-  if ((gPrediction != outcome) || (abs(output) < threshold))
+  int perceptronIndex = pc & (numPerceptrons - 1);
+  
+  if ((gPrediction != outcome) || (abs(prediction) < threshold))
   {
     
     for (int j = 0; j < numWeights; j++)
     {
       int8_t signMultiplier = ((gHistory >> j)&1) == 1 ? 1: -1; 
 
-      perceptronWeightsTable[perceptronIndex][j] += (signMultiplier == (outcome==TAKEN?1:-1))?1:-1; //(((gHistory>>j) & 1)==outcome) ? 1 : -1;
-      perceptronWeightsTable[perceptronIndex][j] = max(min(perceptronWeightsTable[perceptronIndex][j], 127), -128);
+      perceptronWeightsTable[perceptronIndex][j] += signMultiplier*(outcome==TAKEN?1:-1); //(((gHistory>>j) & 1)==outcome) ? 1 : -1;
+      perceptronWeightsTable[perceptronIndex][j] = max(min(perceptronWeightsTable[perceptronIndex][j], absMaxWeight), -absMaxWeight - 1);
     }
     perceptronBiasTable[perceptronIndex] += (outcome==TAKEN ?1:-1);
   }

@@ -49,9 +49,8 @@ handle_option(char *arg)
     sscanf(arg+13,"%d:%d:%d", &ghistoryBits, &lhistoryBits, &pcIndexBits);
   //} else if (!strcmp(arg,"--custom")) {
   } else if (!strncmp(arg,"--custom:",9)) {
-    printf("gsg");
     bpType = CUSTOM;
-    sscanf(arg+9,"%d:%d:%d", &ghistoryBits, &pcIndexBits, &lhistoryBits);
+    sscanf(arg+9,"%d:%d:%d:%d", &ghistoryBits, &numPerceptrons, &weightBits, &threshold);
   } else if (!strcmp(arg,"--verbose")) {
     verbose = 1;
   } else {
@@ -80,8 +79,7 @@ read_branch(uint32_t *pc, uint8_t *outcome)
   return 1;
 }
 
-int
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
   // Set defaults
   stream = stdin;
